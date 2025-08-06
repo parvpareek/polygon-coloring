@@ -1,0 +1,19 @@
+# requirements.txt
+
+# Core deep learning
+torch>=1.13.0
+torchvision>=0.14.0
+accelerate>=0.20.3
+
+# Image processing
+Pillow>=9.0.0
+lpips>=0.1.4
+
+# Experiment tracking
+wandb>=0.13.0
+
+# Visualization
+matplotlib>=3.5.0
+
+# Utilities
+tqdm>=4.64.0

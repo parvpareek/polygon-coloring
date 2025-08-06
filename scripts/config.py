@@ -1,23 +1,24 @@
-class Config:
-    data_dir = 'data'
-    train_split = 'training'
-    val_split = 'validation'
-    img_size = 128
-    batch_size = 16
+import os
+import torch
+from accelerate import Accelerator
 
-    train_json = 'data/training/data.json'
-    val_json = 'data/validation/data.json'
+def default_config():
+    return {
+        'project': 'polygon-coloring',
+        'run_name': os.getenv('RUN_NAME', 'run1'),
+        'epochs': 20,
+        'lr': 1e-4,
+        'batch_size': 16,
+        'img_size': 128,
+        'in_ch': 3,
+        'out_ch': 3,
+        'base_ch': 64,
+        'color_embed_dim': 32,
+        'data_root': 'data/',
+        'lpips_weight': 0.5,
+        'colors': ['red','green','blue','yellow','cyan','magenta','purple','orange'],
+    }
 
-
-    in_ch = 3
-    out_ch = 3
-    base_ch = 16
-    num_down = 2
-    emb_dim = 4
-
-    lr = 1e-3
-    epochs = 5
-
-    wandb_project = 'polygon-coloring'
-    wandb_run_name = 'baseline'
-    save_path = 'unet_baseline.pth'
+CONFIG = default_config()
+DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
+ACCELERATOR = Accelerator()

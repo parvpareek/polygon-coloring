@@ -1,64 +1,66 @@
 import torch
-import wandb
-from accelerate import Accelerator
+import lpips
 from torch.utils.data import DataLoader
-from torch.optim import Adam
-from torch.nn import L1Loss
-from dataset import PolygonColorDataset
-from model import UNet
-from config import Config
+import torchvision
+import wandb
+from config import CONFIG, DEVICE, ACCELERATOR
+from dataset import PolygonDataset, NUM_COLORS
+from model import CrossAttnUNet
+from torch import nn, optim
 
-def main():
-    wandb.init(
-        project=Config.wandb_project,
-        name=Config.wandb_run_name,
-        config=vars(Config)
-    )
+# Data
+train_ds = PolygonDataset(CONFIG['data_root'], 'training', CONFIG['img_size'])
+val_ds   = PolygonDataset(CONFIG['data_root'], 'validation', CONFIG['img_size'])
+train_loader = DataLoader(train_ds, batch_size=CONFIG['batch_size'], shuffle=True, num_workers=2)
+val_loader   = DataLoader(val_ds, batch_size=CONFIG['batch_size'], shuffle=False, num_workers=2)
 
-    accelerator = Accelerator()
+# Model, embedding, optimizer, scheduler, loss
+model = CrossAttnUNet(CONFIG['in_ch'], CONFIG['out_ch'], CONFIG['base_ch'], CONFIG['color_embed_dim']).to(DEVICE)
+color_emb = nn.Embedding(NUM_COLORS, CONFIG['color_embed_dim']).to(DEVICE)
+optimizer = optim.Adam(list(model.parameters()) + list(color_emb.parameters()), lr=CONFIG['lr'])
+scheduler = optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=CONFIG['epochs'], eta_min=1e-6)
+criterion_l1 = nn.L1Loss()
+criterion_lpips = lpips.LPIPS(net='alex').to(DEVICE)
 
-    train_ds = PolygonColorDataset(Config.train_json, Config.img_size)
-    val_ds   = PolygonColorDataset(Config.val_json,   Config.img_size)
+# Accelerator setup
+model, color_emb, optimizer, train_loader, val_loader = ACCELERATOR.prepare(
+    model, color_emb, optimizer, train_loader, val_loader
+)
 
-    train_loader = DataLoader(train_ds, batch_size=Config.batch_size, shuffle=True)
-    val_loader = DataLoader(val_ds, batch_size=Config.batch_size)
+# W&B init
+wandb.login()
+wandb.init(project=CONFIG['project'], name=CONFIG['run_name'], config=CONFIG)
 
-    model = UNet(Config.in_ch, Config.out_ch, [Config.base_ch * (2**i) for i in range(Config.num_down)])
-    optimizer = Adam(model.parameters(), lr=Config.lr)
-    loss_fn = L1Loss()
+# Training loop
+for epoch in range(CONFIG['epochs']):
+    model.train()
+    for x_o, y, c in train_loader:
+        x_o, y, c = x_o.to(DEVICE), y.to(DEVICE), c.to(DEVICE)
+        color_vec = color_emb(c)
+        pred = model(x_o, color_vec)
 
-    model, optimizer, train_loader, val_loader = accelerator.prepare(
-        model, optimizer, train_loader, val_loader
-    )
+        loss_l1 = criterion_l1(pred, y)
+        loss_lpips = criterion_lpips(pred, y).mean()
+        loss = loss_l1 + CONFIG['lpips_weight'] * loss_lpips
 
-    for epoch in range(Config.epochs):
-        model.train()
-        total_loss = 0.0
-        for x, y in train_loader:
-            pred = model(x)
-            loss = loss_fn(pred, y)
-            accelerator.backward(loss)
-            optimizer.step()
-            optimizer.zero_grad()
-            total_loss += loss.item()
+        optimizer.zero_grad()
+        ACCELERATOR.backward(loss)
+        optimizer.step()
 
-        model.eval()
-        val_loss = 0.0
-        with torch.no_grad():
-            for x, y in val_loader:
-                pred = model(x)
-                val_loss += loss_fn(pred, y).item()
+    scheduler.step()
 
-        wandb.log({
-            'epoch': epoch,
-            'train_loss': total_loss / len(train_loader),
-            'val_loss': val_loss / len(val_loader)
-        })
+    # Validation logging
+    model.eval()
+    x_o_val, y_val, c_val = next(iter(val_loader))
+    x_o_val, y_val, c_val = x_o_val.to(DEVICE), y_val.to(DEVICE), c_val.to(DEVICE)
+    with torch.no_grad():
+        pred_val = model(x_o_val, color_emb(c_val))
+        grid = torchvision.utils.make_grid(
+            torch.cat([x_o_val, y_val, pred_val]), nrow=x_o_val.size(0), normalize=True
+        )
+        wandb.log({"predictions": wandb.Image(grid, caption=f"Epoch {epoch+1}")})
 
-    accelerator.wait_for_everyone()
-    if accelerator.is_main_process:
-        torch.save(accelerator.unwrap_model(model).state_dict(), Config.save_path)
-        wandb.save(Config.save_path)
-
-if __name__ == '__main__':
-    main()
+# Save
+torch.save(model.state_dict(), "model.pth")
+torch.save(color_emb.state_dict(), "color_emb.pth")
+wandb.finish()
