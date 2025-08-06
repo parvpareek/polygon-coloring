@@ -19,7 +19,7 @@ python infer.py
 
 --- 
 
-![10 loss curves](imgs/validation_loss)  
+![10 loss curves](imgs/validation_loss.png)  
 10 most recent loss curves
 
 ## Sample Predictions
