@@ -19,9 +19,6 @@ python infer.py
 
 --- 
 
-![10 loss curves](imgs/validation_loss.png)  
-10 most recent loss curves
-
 ## Sample Predictions
 
 Here’s how the model’s output evolves over training:
@@ -48,3 +45,9 @@ Here’s how the model’s output evolves over training:
 
 ![Final Validation Loss](imgs/val_loss_final.png)  
 *Figure 5: Validation loss curve over epochs.*
+
+## 10 Recent Training Runs
+
+![10 loss curves](imgs/validation_loss.png)  
+10 most recent loss curves
+
